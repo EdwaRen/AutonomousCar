@@ -1,171 +1,237 @@
 package com.autonomouscarapp.autonomouscar;
+
 import android.support.v7.app.AppCompatActivity;
 
-// CHECK
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.IntentFilter;
+import android.os.Handler;
 import android.os.Bundle;
-import android.content.Intent;
 
-// Visual Imports
+import android.support.constraint.ConstraintLayout;
+import android.widget.RelativeLayout;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 
-// Messaging Imports
 import android.widget.Toast;
-import android.app.ProgressDialog;
 
-// Bluetooth Imports
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothSocket;
 
-public class MotorControl extends AppCompatActivity implements View.OnClickListener{ // Implement statement is so switch onClick can be used
+import android.view.MotionEvent;
 
-    // Variable Declaration
+public class MotorControl extends AppCompatActivity {
 
-    // Visuals
-    Button forwardButton, backwardButton, forwardLeftButton, forwardRightButton, backwardLeftButton, backwardRightButton, stopButton;
+    ImageView outerControlWheel;
+    ImageView innerControlWheel;
+    RelativeLayout outerControlWheelContainer;
+    ConstraintLayout phoneScreen;
+    Button userControlButton;
+    Button autonomousModeButton;
 
-    // Bluetooth Connection
     private BluetoothConnection myBluetoothConnection;
     BluetoothSocket myBluetoothSocket = null;
     String MACAddress;
 
+    private float phoneScreenHeight;
+    private float margin;
+    private float outerControlWheelRadius;
+    private float innerControlWheelRadius;
+    private float innerWheelTopLeftDefaultX;
+    private float innerWheelTopLeftDefaultY;
+    private float innerWheelDefaultCenterX;
+    private float innerWheelDefaultCenterY;
+    float pointerX;
+    float pointerY;
+    double pointerRadius; // Distance of pointer from center of outer control wheel
+    double maximumPointerRadius;
+
+    int mode;
+    int leftOrRight;
+    int forwardOrBackward;
+    String speedString;
+    int speed;
+
+    private static final String USER_CONTROL_MODE = "55555>";
+    private static final String AUTONOMOUS_MODE = "66666>";
+
+    private static final int FORWARD = 0;
+    private static final int BACKWARD = 1;
+    private static final int LEFT = 2;
+    private static final int RIGHT = 3;
+    private static final int STRAIGHT = 4;
+    private static final int STOP = 9;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
-        // Set up layout
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_motor_control);
 
-        // Creates a new Bluetooth Connection
         myBluetoothConnection = new BluetoothConnection();
 
-        // Gets the MAC Address of the desired device
         MACAddress = getIntent().getExtras().getString("device_address");
 
-        // Sends a message to show it's connecting, then connects (make new connect thread, make RFCOMM connection)
         message("Connecting...");
-        myBluetoothConnection.connect(myBluetoothConnection.getDevice(MACAddress));
+        myBluetoothConnection.connect(myBluetoothConnection.getBluetoothDevice(MACAddress));
         myBluetoothSocket = myBluetoothConnection.getMyBluetoothSocket();
 
-        // View initialization
-        forwardButton = (Button)findViewById(R.id.forwardButton);
-        forwardButton.setOnClickListener(this);
-        forwardLeftButton = (Button)findViewById(R.id.forwardLeftButton);
-        forwardLeftButton.setOnClickListener(this);
-        forwardRightButton = (Button)findViewById(R.id.forwardRightButton);
-        forwardRightButton.setOnClickListener(this);
-        backwardButton = (Button)findViewById(R.id.backwardButton);
-        backwardButton.setOnClickListener(this);
-        backwardLeftButton = (Button)findViewById(R.id.backwardLeftButton);
-        backwardLeftButton.setOnClickListener(this);
-        backwardRightButton = (Button)findViewById(R.id.backwardRightButton);
-        backwardRightButton.setOnClickListener(this);
-        stopButton = (Button)findViewById(R.id.stopButton);
-        stopButton.setOnClickListener(this);
+        phoneScreen = (ConstraintLayout)findViewById(R.id.phoneScreen);
+        outerControlWheelContainer = (RelativeLayout)findViewById(R.id.outerControlWheelContainer);
+        outerControlWheel = (ImageView)findViewById(R.id.outerControlWheel);
+        innerControlWheel = (ImageView)findViewById(R.id.innerControlWheel);
+        userControlButton = (Button)findViewById(R.id.userControlButton);
+        autonomousModeButton = (Button)findViewById(R.id.autonomousModeButton);
+
+        innerControlWheel.setOnTouchListener(innerControlWheelTouchListener);
+        userControlButton.setOnClickListener(userControlButtonClickListener);
+        autonomousModeButton.setOnClickListener(autonomousModeButtonClickListener);
+
+        // Sets constant values of control wheel after control wheel view has been set up
+        outerControlWheelContainer.post(new Runnable() {
+            @Override
+            public void run() {
+                phoneScreenHeight = phoneScreen.getHeight();
+                outerControlWheelRadius = outerControlWheel.getWidth()/2;
+                innerControlWheelRadius = innerControlWheel.getWidth()/2;
+                margin = phoneScreenHeight - outerControlWheelContainer.getWidth();
+                innerWheelTopLeftDefaultX = outerControlWheelRadius - innerControlWheelRadius;
+                innerWheelTopLeftDefaultY = outerControlWheelRadius - innerControlWheelRadius;
+                innerWheelDefaultCenterX = innerWheelTopLeftDefaultX + innerControlWheelRadius;
+                innerWheelDefaultCenterY = innerWheelTopLeftDefaultY + innerControlWheelRadius;
+                maximumPointerRadius = outerControlWheelRadius - innerControlWheelRadius;
+            }
+        });
     }
 
-    // Creates a small popup message
     private void message(String s)
     {
-        Toast.makeText(getApplicationContext(),s,Toast.LENGTH_SHORT).show();
+        final Toast toastMessage = Toast.makeText(getApplicationContext(),s,Toast.LENGTH_SHORT);
+        toastMessage.show();
+
+        // Shortens duration of Toast message
+        // Taken from https://stackoverflow.com/questions/6094792/how-to-set-toast-display-time-less-than-toast-length-short, by user Erikas
+        Handler handler = new Handler();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                toastMessage.cancel();
+            }
+        }, 500);
     }
 
-    // Runs method depending on which button is clicked
-    @Override
-    public void onClick(View view) {
-        switch (view.getId()){
-            case R.id.forwardButton:
-                forward();
-                break;
+    private View.OnClickListener userControlButtonClickListener = new View.OnClickListener() {
 
-            case R.id.forwardLeftButton:
-                forwardLeft();
-                break;
-
-            case R.id.forwardRightButton:
-                forwardRight();
-                break;
-
-            case R.id.backwardButton:
-                backward();
-                break;
-
-            case R.id.backwardLeftButton:
-                backwardLeft();
-                break;
-
-            case R.id.backwardRightButton:
-                backwardRight();
-                break;
-
-            case R.id.stopButton:
-                stop();
-                break;
+        @Override
+        public void onClick(View view) {
+            if (myBluetoothConnection.isConnected() == true){
+                myBluetoothConnection.sendCommand(USER_CONTROL_MODE);
+            }
+            innerControlWheel.setVisibility(View.VISIBLE);
+            outerControlWheel.setVisibility(View.VISIBLE);
         }
-    }
+    };
 
-    private void forward() {
-        if (myBluetoothSocket!=null)
-        {
-            message("Forward");
-            myBluetoothConnection.send("1");
-        }
-    }
+    private View.OnClickListener autonomousModeButtonClickListener = new View.OnClickListener() {
 
-    private void forwardLeft()
-    {
-        if (myBluetoothSocket!=null)
-        {
-            message("Forward Left");
-            myBluetoothConnection.send("4");
+        @Override
+        public void onClick(View view) {
+            if (myBluetoothConnection.isConnected() == true){
+                myBluetoothConnection.sendCommand(AUTONOMOUS_MODE);
+            }
+            innerControlWheel.setVisibility(View.INVISIBLE);
+            outerControlWheel.setVisibility(View.INVISIBLE);
         }
-    }
+    };
 
-    private void forwardRight()
-    {
-        if (myBluetoothSocket!=null)
-        {
-            message("Forward Right");
-            myBluetoothConnection.send("3");
-        }
-    }
+    private View.OnTouchListener innerControlWheelTouchListener = new View.OnTouchListener() {
 
-    private void backward()
-    {
-        if (myBluetoothSocket!=null)
-        {
-            message("Backward");
-            myBluetoothConnection.send("2");
-        }
-    }
+        public boolean onTouch(View v, MotionEvent touchEvent) {
 
-    private void backwardLeft()
-    {
-        if (myBluetoothSocket!=null)
-        {
-            message("Backward Left");
-            myBluetoothConnection.send("6");
-        }
-    }
+            pointerX = touchEvent.getRawX();
+            pointerY = touchEvent.getRawY();
 
-    private void backwardRight ()
-    {
-        if (myBluetoothSocket!=null)
-        {
-            message("Backward Right");
-            myBluetoothConnection.send("5");
-        }
-    }
+            switch (touchEvent.getAction()) {
 
-    private void stop()
-    {
-        if (myBluetoothSocket!=null)
-        {
-            message("Stop");
-            myBluetoothConnection.send("7");
+                // Moment inner control wheel is touched
+                case MotionEvent.ACTION_DOWN:
+                    synchronized (this) {
+                    }
+                    break;
+
+                // Dragging inner control wheel around
+                case MotionEvent.ACTION_MOVE:
+                    synchronized (this) {
+
+                        pointerY = pointerY - margin;
+
+                        pointerRadius = Math.sqrt(Math.pow(pointerX - innerWheelDefaultCenterX, 2) + Math.pow(pointerY - innerWheelDefaultCenterY, 2));
+
+                        if (pointerRadius <= maximumPointerRadius){
+                            innerControlWheel.setX(pointerX - innerControlWheelRadius);
+                            innerControlWheel.setY(pointerY - innerControlWheelRadius);
+                        }
+
+                        else {
+                            pointerRadius = maximumPointerRadius;
+                        }
+
+                        speed = (int)((pointerRadius/(maximumPointerRadius))*255);
+
+                        // Adding 1000 to get leading zeros if speed is 1 - e.g., if speed = 1, speed + 1000 = 1001, substring taken is 001
+                        speedString = String.valueOf(speed+1000).substring(1);
+
+                        if (pointerX - innerWheelDefaultCenterX > 25){
+                            leftOrRight = RIGHT;
+                        }
+
+                        else if (pointerX - innerWheelDefaultCenterX < -25) {
+                            leftOrRight = LEFT;
+                        }
+
+                        else {
+                            leftOrRight = STRAIGHT;
+                        }
+
+                        // If control wheel is above center position
+                        if (pointerY - innerWheelDefaultCenterY < 0) {
+                            forwardOrBackward = FORWARD;
+                        }
+
+                        // If control wheel is below center position
+                        else if (pointerY - innerWheelDefaultCenterY > 0){
+                            forwardOrBackward = BACKWARD;
+                        }
+
+                        else {
+                            forwardOrBackward = STOP;
+                        }
+
+                        // The ">" is the end message marker
+                        if (myBluetoothConnection.isConnected() == true){
+                            if (forwardOrBackward == STOP){
+                                myBluetoothConnection.sendCommand("99999>");
+                            }
+                            else {
+                                myBluetoothConnection.sendCommand(String.valueOf(leftOrRight)+String.valueOf(forwardOrBackward)+speedString+">");
+                                message(String.valueOf(leftOrRight)+String.valueOf(forwardOrBackward)+speedString+">");
+                            }
+                        }
+                    }
+                    break;
+
+                // Stop touching screen
+                case MotionEvent.ACTION_UP:
+                    synchronized (this) {
+
+                        innerControlWheel.setX(innerWheelTopLeftDefaultX);
+                        innerControlWheel.setY(innerWheelTopLeftDefaultY);
+
+                        if (myBluetoothConnection.isConnected() == true)
+                        {
+                            myBluetoothConnection.sendCommand("99999>");
+                        }
+                    }
+                    break;
+            }
+            return true;
         }
-    }
+    };
 }
